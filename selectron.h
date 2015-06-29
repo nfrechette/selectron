@@ -13,6 +13,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef __APPLE__
+#include <CL/opencl.h>
+#else
+#include <OpenCL/OpenCL.h>
+#endif
+
 #define RULE_ID_MAX             25
 #define NODE_ID_MAX             50
 #define RULE_TAG_NAME_MAX       8
@@ -51,8 +57,8 @@
 
 #define STRUCT_CSS_PROPERTY \
     struct css_property { \
-        int name; \
-        int value; \
+        cl_int name; \
+        cl_int value; \
     }
 
 STRUCT_CSS_PROPERTY;
@@ -61,18 +67,18 @@ STRUCT_CSS_PROPERTY;
 
 #define STRUCT_CSS_RULE \
     struct css_rule { \
-        int type; \
-        int value; \
-        int property_index; \
-        int property_count; \
+        cl_int type; \
+        cl_int value; \
+        cl_int property_index; \
+        cl_int property_count; \
     }
 
 STRUCT_CSS_RULE;
 
 #define STRUCT_CSS_CUCKOO_HASH \
     struct css_cuckoo_hash { \
-        int left_seed; \
-        int right_seed; \
+        cl_int left_seed; \
+        cl_int right_seed; \
         struct css_rule left[HASH_SIZE]; \
         struct css_rule right[HASH_SIZE]; \
     }
@@ -176,9 +182,9 @@ STRUCT_CSS_STYLESHEET;
 
 #define STRUCT_CSS_MATCHED_PROPERTY \
     struct css_matched_property { \
-        int specificity; \
-        int property_index; \
-        int property_count; \
+        cl_int specificity; \
+        cl_int property_index; \
+        cl_int property_count; \
     }
 
 STRUCT_CSS_MATCHED_PROPERTY;
@@ -186,13 +192,13 @@ STRUCT_CSS_MATCHED_PROPERTY;
 #define STRUCT_DOM_NODE(qualifier) \
     struct dom_node { \
         struct dom_node *parent; \
-        int pad_pre[DOM_PADDING_PRE]; \
-        int id; \
-        int tag_name; \
-        int class_count; \
-        int first_class; \
-        int style[MAX_STYLE_PROPERTIES]; \
-        int pad_post[DOM_PADDING_POST]; \
+        cl_int pad_pre[DOM_PADDING_PRE]; \
+        cl_int id; \
+        cl_int tag_name; \
+        cl_int class_count; \
+        cl_int first_class; \
+        cl_int style[MAX_STYLE_PROPERTIES]; \
+        cl_int pad_post[DOM_PADDING_POST]; \
     }
 
 STRUCT_DOM_NODE();
@@ -201,15 +207,16 @@ STRUCT_DOM_NODE();
 #define SORT_SELECTORS(matched_properties, count) \
     do { \
         for (int i = 1; i < count; i++) { \
-            for (int j = i; \
-                    j > 0 && \
-                    matched_properties[j - 1].specificity > \
-                    matched_properties[j].specificity; \
+            struct css_matched_property key = matched_properties[i]; \
+            int j; \
+            for (j = i - 1; \
+                    j >= 0 && \
+                    matched_properties[j].specificity > \
+                    key.specificity; \
                     j--) { \
-                struct css_matched_property tmp = matched_properties[j - 1]; \
-                matched_properties[j - 1] = matched_properties[j]; \
-                matched_properties[j] = tmp; \
+                matched_properties[j + 1] = matched_properties[j]; \
             } \
+            matched_properties[j + 1] = key; \
         } \
     } while(0)
 
@@ -228,10 +235,13 @@ STRUCT_DOM_NODE();
                                                                     left_index, \
                                                                     right_index); \
         if (rule != 0) { \
+            count++; \
+            if (0) { /*skip*/ \
             int index = count++; \
             matched_properties[index].specificity = spec; \
             matched_properties[index].property_index = rule->property_index; \
             matched_properties[index].property_count = rule->property_count; \
+            }/*skip*/ \
         } \
     } while(0)
 
@@ -245,13 +255,18 @@ STRUCT_DOM_NODE();
                         sortfn, \
                         qualifier) \
     do {\
-        qualifier struct dom_node *node = &first[index]; \
+        qualifier struct dom_node *node = &first[0]; \
         int count = 0; \
         struct css_matched_property matched_properties[16]; \
         int left_id_index = hashfn(node->id, LEFT_SEED) % HASH_SIZE; \
         int right_id_index = hashfn(node->id, RIGHT_SEED) % HASH_SIZE; \
         int left_tag_name_index = hashfn(node->tag_name, LEFT_SEED) % HASH_SIZE; \
         int right_tag_name_index = hashfn(node->tag_name, RIGHT_SEED) % HASH_SIZE; \
+        left_id_index = 0; \
+        right_id_index = 0; \
+        left_tag_name_index = 0; \
+        right_tag_name_index = 0; \
+        if (1) { /*skip*/ \
         MATCH_SELECTORS_HASH(node->id, \
                              &stylesheet->author.ids, \
                              0, \
@@ -261,6 +276,8 @@ STRUCT_DOM_NODE();
                              count, \
                              matched_properties, \
                              qualifier); \
+        }/*skip*/ \
+        if (1) { /*skip*/ \
         MATCH_SELECTORS_HASH(node->tag_name, \
                              &stylesheet->author.tag_names, \
                              0, \
@@ -270,6 +287,8 @@ STRUCT_DOM_NODE();
                              count, \
                              matched_properties, \
                              qualifier); \
+        }/*skip*/ \
+        if (0) { /*skip*/ \
         MATCH_SELECTORS_HASH(node->id, \
                              &stylesheet->user_agent.ids, \
                              1, \
@@ -279,6 +298,8 @@ STRUCT_DOM_NODE();
                              count, \
                              matched_properties, \
                              qualifier); \
+        }/*skip*/ \
+        if (0) { /*skip*/ \
         MATCH_SELECTORS_HASH(node->tag_name, \
                              &stylesheet->user_agent.tag_names, \
                              1, \
@@ -288,6 +309,8 @@ STRUCT_DOM_NODE();
                              count, \
                              matched_properties, \
                              qualifier); \
+        }/*skip*/ \
+        if (0) { /*skip*/ \
         int class_count = node->class_count; \
         int first_class = node->first_class; \
         for (int i = 0; i < class_count; i++) { \
@@ -313,7 +336,15 @@ STRUCT_DOM_NODE();
                                  matched_properties, \
                                  qualifier); \
         } \
-        sortfn(matched_properties, count); \
+        }/*skip*/ \
+        if (count > 0) return; \
+        if (count < 0) return; \
+        if (count == 0) return; \
+        count = count; \
+        if (1) { /*skip*/ \
+        sortfn(&matched_properties[0], count); \
+        }/*skip*/ \
+        if (0) { /*skip*/ \
         for (int i = 0; i < count; i++) { \
             struct css_matched_property *matched = &matched_properties[i]; \
             int count = matched->property_count; \
@@ -323,6 +354,7 @@ STRUCT_DOM_NODE();
                 node->style[property->name] = property->value; \
             } \
         } \
+        }/*skip*/ \
     } while(0)
 
 #if 0
@@ -535,6 +567,7 @@ void report_timing(const char *name,
         return;
     }
     fprintf(stderr, "%s%s %s: %g ms\n", name, mode_to_string(mode), operation, ms);
+    fflush(stderr);
 }
 
 #endif
