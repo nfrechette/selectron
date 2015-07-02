@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
 
 #ifndef __APPLE__
 #include <windows.h>
@@ -43,25 +44,26 @@ uint64_t mach_absolute_time() {
 
 const char *selector_matching_kernel_source = "\n"
     "#define cl_int int\n"
+    "#define cl_ulong ulong\n"
     XSTRINGIFY(STRUCT_CSS_PROPERTY) ";\n"
     XSTRINGIFY(STRUCT_CSS_RULE) ";\n"
     XSTRINGIFY(STRUCT_CSS_CUCKOO_HASH) ";\n"
     XSTRINGIFY(STRUCT_CSS_MATCHED_PROPERTY) ";\n"
     XSTRINGIFY(STRUCT_CSS_STYLESHEET_SOURCE) ";\n"
     XSTRINGIFY(STRUCT_CSS_STYLESHEET) ";\n"
-    XSTRINGIFY(STRUCT_DOM_NODE(__global)) ";\n"
+    XSTRINGIFY(STRUCT_DOM_NODE) ";\n"
     "static unsigned int css_rule_hash(unsigned int key, unsigned int seed) {\n"
     "   " XSTRINGIFY(CSS_RULE_HASH(key, seed)) ";\n"
     "}\n"
     "\n"
-    "static __global struct css_rule *css_cuckoo_hash_find(__global struct css_cuckoo_hash *hash,\n"
+    "static __global const struct css_rule *css_cuckoo_hash_find(__global const struct css_cuckoo_hash *hash,\n"
     "                                               int key,\n"
     "                                               int left_index,\n"
     "                                               int right_index) {\n"
     "   " XSTRINGIFY(CSS_CUCKOO_HASH_FIND(hash, key, left_index, right_index)) ";\n"
     "}\n"
     "\n"
-    "static void sort_selectors(struct css_matched_property *matched_properties, int length) {\n"
+    "static void sort_selectors(__local struct css_matched_property *matched_properties, int length) {\n"
     "   " XSTRINGIFY(SORT_SELECTORS(matched_properties, length)) ";\n"
     "}\n"
     "\n"
@@ -116,13 +118,13 @@ void abort_if_null(void *ptr, const char *msg = "") {
         } \
     } while(0)
 
-#define MALLOC(context, commands, err, mode, name, perm, type, count) \
+#define MALLOC(context, commands, err, mode, name, perm, type) \
     do { \
-        ctx.device_##name = clCreateBuffer(context, perm, sizeof(type) * (count), NULL, NULL); \
-        abort_if_null(ctx.device_##name); \
+        ctx.device_##name = clCreateBuffer(context, perm, inctx->size_##name, NULL, NULL); \
+        abort_if_null(ctx.device_##name, "create buffer failed " #name); \
         if ((mode) == MODE_MAPPED) { \
         } else { \
-            ctx.host_##name = (type *)malloc(sizeof(type) * count); \
+            ctx.host_##name = (type *)malloc(inctx->size_##name); \
         } \
         /*fprintf(stderr, "mapped " #name " to %p\n", ctx.host_##name);*/ \
     } while(0)
@@ -146,6 +148,19 @@ void dump_dom(struct dom_node *node, cl_int *classes, const char* path) {
     fclose(f); f = NULL;
 }
 
+struct input_context
+{
+    struct css_stylesheet *stylesheet;
+    struct css_property *properties;
+    struct dom_node *dom;
+    cl_int *classes;
+
+    int size_dom;
+    int size_stylesheet;
+    int size_properties;
+    int size_classes;
+};
+
 struct kernel_context
 {
     struct css_stylesheet *host_stylesheet;
@@ -157,15 +172,12 @@ struct kernel_context
     cl_mem device_stylesheet;
     cl_mem device_properties;
     cl_mem device_classes;
-
-    int size_dom;
-    int size_stylesheet;
-    int size_properties;
-    int size_classes;
 };
 
-void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char* device_name, int mode, cl_device_type device_type, int dump)
+void init_mem(cl_command_queue commands, const struct input_context* inctx, struct kernel_context* ctx, const char* device_name, int mode, cl_device_type device_type)
 {
+    uint64_t start = mach_absolute_time();
+
     if (mode == MODE_MAPPED) {
         cl_int err;
         ctx->host_stylesheet = (struct css_stylesheet *)clEnqueueMapBuffer(commands,
@@ -173,7 +185,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                                  CL_TRUE,
                                                  CL_MAP_READ | CL_MAP_WRITE,
                                                  0,
-                                                 ctx->size_stylesheet,
+                                                 inctx->size_stylesheet,
                                                  0,
                                                  NULL,
                                                  NULL,
@@ -185,7 +197,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                                  CL_TRUE,
                                                  CL_MAP_READ | CL_MAP_WRITE,
                                                  0,
-                                                 ctx->size_properties,
+                                                 inctx->size_properties,
                                                  0,
                                                  NULL,
                                                  NULL,
@@ -197,7 +209,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                                  CL_TRUE,
                                                  CL_MAP_READ | CL_MAP_WRITE,
                                                  0,
-                                                 ctx->size_dom,
+                                                 inctx->size_dom,
                                                  0,
                                                  NULL,
                                                  NULL,
@@ -209,7 +221,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                                  CL_TRUE,
                                                  CL_MAP_READ | CL_MAP_WRITE,
                                                  0,
-                                                 ctx->size_classes,
+                                                 inctx->size_classes,
                                                  0,
                                                  NULL,
                                                  NULL,
@@ -217,24 +229,12 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
         CHECK_CL(err);
     }
 
-    // Create the stylesheet and the DOM.
-    uint64_t start = mach_absolute_time();
-    int property_index = 0;
-    create_stylesheet(ctx->host_stylesheet, ctx->host_properties, &property_index);
-    int class_count = 0, global_count = 0;
-    create_dom(ctx->host_dom, ctx->host_classes, NULL, &class_count, &global_count, 0);
-
-    double elapsed = (double)(mach_absolute_time() - start) / 1000000.0;
-    report_timing(device_name, "stylesheet/DOM creation", elapsed, false, mode);
-
-    if (dump)
-    {
-        const char* dom_input_path = device_type == CL_DEVICE_TYPE_GPU ? "GPU_in.dat" : "CPU_in.dat";
-        dump_dom(ctx->host_dom, ctx->host_classes, dom_input_path);
-    }
+    memcpy(ctx->host_stylesheet, inctx->stylesheet, inctx->size_stylesheet);
+    memcpy(ctx->host_properties, inctx->properties, inctx->size_properties);
+    memcpy(ctx->host_dom, inctx->dom, inctx->size_dom);
+    memcpy(ctx->host_classes, inctx->classes, inctx->size_classes);
 
     // Unmap or copy buffers if necessary.
-    start = mach_absolute_time();
     switch (mode) {
     case MODE_MAPPED:
         CHECK_CL(clEnqueueUnmapMemObject(commands,
@@ -274,7 +274,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                       ctx->device_stylesheet,
                                       CL_TRUE,
                                       0,
-                                      sizeof(struct css_stylesheet),
+                                      inctx->size_stylesheet,
                                       ctx->host_stylesheet,
                                       0,
                                       NULL,
@@ -283,7 +283,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                       ctx->device_properties,
                                       CL_TRUE,
                                       0,
-                                      sizeof(struct css_property) * PROPERTY_COUNT,
+                                      inctx->size_properties,
                                       ctx->host_properties,
                                       0,
                                       NULL,
@@ -292,7 +292,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                       ctx->device_dom,
                                       CL_TRUE,
                                       0,
-                                      sizeof(struct dom_node) * NODE_COUNT,
+                                      inctx->size_dom,
                                       ctx->host_dom,
                                       0,
                                       NULL,
@@ -301,7 +301,7 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
                                       ctx->device_classes,
                                       CL_TRUE,
                                       0,
-                                      sizeof(cl_int) * CLASS_COUNT,
+                                      inctx->size_classes,
                                       ctx->host_classes,
                                       0,
                                       NULL,
@@ -310,11 +310,46 @@ void init_mem(cl_command_queue commands, struct kernel_context* ctx, const char*
 
     clFinish(commands);
 
-    elapsed = (double)(mach_absolute_time() - start) / 1000000.0;
+    double elapsed = (double)(mach_absolute_time() - start) / 1000000.0;
     report_timing(device_name, "buffer copying", elapsed, false, mode);
 }
 
-void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mode) {
+void print_device_info(cl_device_id device_id)
+{
+    size_t max_workgroup_size;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &max_workgroup_size, NULL));
+    fprintf(stderr, "max workgroup size: %d\n", (int)max_workgroup_size);
+
+    cl_uint num_compute_units;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &num_compute_units, NULL));
+    fprintf(stderr, "num compute units: %d\n", (int)num_compute_units);
+
+    cl_ulong local_mem_size;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(cl_ulong), &local_mem_size, NULL));
+    fprintf(stderr, "local mem size: %d\n", (int)local_mem_size);
+
+    cl_ulong global_mem_size;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &global_mem_size, NULL));
+    fprintf(stderr, "global mem size: %d\n", (int)global_mem_size);
+
+    cl_bool is_mem_unified;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof(cl_bool), &is_mem_unified, NULL));
+    fprintf(stderr, "is memory unified: %s\n", is_mem_unified ? "true" : "false");
+
+    cl_uint cache_line_size;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(cl_uint), &cache_line_size, NULL));
+    fprintf(stderr, "cache line size: %d\n", (int)cache_line_size);
+
+    cl_ulong global_cache_size;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, sizeof(cl_ulong), &global_cache_size, NULL));
+    fprintf(stderr, "global cache size: %d\n", (int)global_cache_size);
+
+    cl_uint address_space_size;
+    CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_ADDRESS_BITS, sizeof(cl_uint), &address_space_size, NULL));
+    fprintf(stderr, "address space size: %d\n", (int)address_space_size);
+}
+
+void go(cl_platform_id platform, cl_device_type device_type, int mode, const struct input_context* inctx) {
 #ifndef NO_SVM
     FIND_EXTENSION(clSVMAllocAMD, platform);
     FIND_EXTENSION(clSVMFreeAMD, platform);
@@ -330,6 +365,8 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_NAME, device_name_size, device_name, NULL));
     fprintf(stderr, "device found: %s\n", device_name);
 
+    print_device_info(device_id);
+
     cl_context_properties props[6] = {
         CL_CONTEXT_PLATFORM, (cl_context_properties)platform,
 #ifndef NO_SVM
@@ -341,10 +378,10 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
     cl_int err;
     cl_context context = clCreateContextFromType(props, device_type, NULL, NULL, &err);
     CHECK_CL(err);
-    abort_if_null(context);
+    abort_if_null(context, "create context failed");
 
     cl_command_queue commands = clCreateCommandQueue(context, device_id, 0, &err);
-    abort_if_null(commands);
+    abort_if_null(commands, "create command queue failed");
 
     cl_program program = clCreateProgramWithSource(context,
                                                    1,
@@ -353,8 +390,7 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
                                                    &err);
     CHECK_CL(err);
 
-    const char* build_options = "-cl-opt-disable -cl-strict-aliasing";
-    err = clBuildProgram(program, 0, NULL, build_options, NULL, NULL);
+    err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
     if (err != CL_SUCCESS) {
         cl_build_status build_status;
         CHECK_CL(clGetProgramBuildInfo(program,
@@ -410,19 +446,7 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
     cl_kernel kernel = clCreateKernel(program, "match_selectors", &err);
     CHECK_CL(err);
 
-    //srand(seed);
-    srand(42);
-
     struct kernel_context ctx = {0};
-    ctx.size_dom = sizeof(struct dom_node) * NODE_COUNT;
-    ctx.size_stylesheet = sizeof(struct css_stylesheet) * 1;
-    ctx.size_properties = sizeof(struct css_property) * PROPERTY_COUNT;
-    ctx.size_classes = sizeof(cl_int) * CLASS_COUNT;
-
-    fprintf(stderr, "DOM size: %d\n", ctx.size_dom);
-    fprintf(stderr, "stylesheet size: %d\n", ctx.size_stylesheet);
-    fprintf(stderr, "properties size: %d\n", ctx.size_properties);
-    fprintf(stderr, "classes size: %d\n", ctx.size_classes);
 
     if (mode != MODE_SVM) {
         MALLOC(context,
@@ -431,32 +455,28 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
                mode,
                dom,
                CL_MEM_READ_WRITE,
-               struct dom_node,
-               NODE_COUNT);
+               struct dom_node);
         MALLOC(context,
                commands,
                err,
                mode,
                stylesheet,
                CL_MEM_READ_ONLY,
-               struct css_stylesheet,
-               1);
+               struct css_stylesheet);
         MALLOC(context,
                commands,
                err,
                mode,
                properties,
                CL_MEM_READ_ONLY,
-               struct css_property,
-               PROPERTY_COUNT);
+               struct css_property);
         MALLOC(context,
                commands,
                err,
                mode,
                classes,
                CL_MEM_READ_ONLY,
-               cl_int,
-               CLASS_COUNT);
+               cl_int);
     } else {
 #ifndef NO_SVM
         // Allocate the rule tree.
@@ -488,7 +508,7 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
 #endif
     }
 
-    uint64_t start = mach_absolute_time();
+    uint64_t start = 0;
 
     // Figure out the allowable size.
     size_t local_workgroup_size;
@@ -498,9 +518,16 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
                                       sizeof(local_workgroup_size),
                                       &local_workgroup_size,
                                       NULL));
-    fprintf(stderr, "local workgroup size=%d\n", (int)local_workgroup_size);
+    fprintf(stderr, "kernel local workgroup size=%d\n", (int)local_workgroup_size);
 
-    clFinish(commands);
+    cl_ulong kernel_local_mem_size;
+    CHECK_CL(clGetKernelWorkGroupInfo(kernel,
+                                      device_id,
+                                      CL_KERNEL_LOCAL_MEM_SIZE,
+                                      sizeof(kernel_local_mem_size),
+                                      &kernel_local_mem_size,
+                                      NULL));
+    fprintf(stderr, "kernel local mem size=%d\n", (int)kernel_local_mem_size);
 
     // Set the arguments to the kernel.
     if (mode != MODE_SVM) {
@@ -517,36 +544,14 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
 #endif
     }
 
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < 3; ++i)
     {
-        int dump = (i == 0 ? 1 : 0);
-
         // Create the stylesheet and the DOM.
-        init_mem(commands, &ctx, device_name, mode, device_type, dump);
-
-#if 0
-        // Set the arguments to the kernel.
-        if (mode != MODE_SVM) {
-            CHECK_CL(clSetKernelArg(kernel, 0, sizeof(cl_mem), &ctx.device_dom));
-            CHECK_CL(clSetKernelArg(kernel, 1, sizeof(cl_mem), &ctx.device_stylesheet));
-            CHECK_CL(clSetKernelArg(kernel, 2, sizeof(cl_mem), &ctx.device_properties));
-            CHECK_CL(clSetKernelArg(kernel, 3, sizeof(cl_mem), &ctx.device_classes));
-        } else {
-#ifndef NO_SVM
-            CHECK_CL(clSetKernelArgSVMPointerAMD(kernel, 0, ctx.host_dom));
-            CHECK_CL(clSetKernelArgSVMPointerAMD(kernel, 1, ctx.host_stylesheet));
-            CHECK_CL(clSetKernelArgSVMPointerAMD(kernel, 2, ctx.host_properties));
-            CHECK_CL(clSetKernelArgSVMPointerAMD(kernel, 3, ctx.host_classes));
-#endif
-        }
-
-        clFinish(commands);
-#endif
+        init_mem(commands, inctx, &ctx, device_name, mode, device_type);
 
         start = mach_absolute_time();
-        //size_t global_work_size = NODE_COUNT;
-        local_workgroup_size = 1;
-        size_t global_work_size = 1 * local_workgroup_size;
+        size_t global_work_size = NODE_COUNT;
+        local_workgroup_size = local_workgroup_size > 320 ? 320 : local_workgroup_size;
         CHECK_CL(clEnqueueNDRangeKernel(commands,
                                         kernel,
                                         1,
@@ -565,10 +570,10 @@ void go(cl_platform_id platform, time_t seed, cl_device_type device_type, int mo
 
     if (mode != MODE_SVM) {
         // Retrieve the DOM.
-        struct dom_node *device_dom_mirror = (struct dom_node *)clEnqueueMapBuffer(commands, ctx.device_dom, CL_TRUE, CL_MAP_READ, 0, ctx.size_dom, 0, NULL, NULL, &err);
+        struct dom_node *device_dom_mirror = (struct dom_node *)clEnqueueMapBuffer(commands, ctx.device_dom, CL_TRUE, CL_MAP_READ, 0, inctx->size_dom, 0, NULL, NULL, &err);
         CHECK_CL(err);
 
-        int *device_classes_mirror = (int *)clEnqueueMapBuffer(commands, ctx.device_classes, CL_TRUE, CL_MAP_READ, 0, ctx.size_classes, 0, NULL, NULL, &err);
+        cl_int *device_classes_mirror = (cl_int *)clEnqueueMapBuffer(commands, ctx.device_classes, CL_TRUE, CL_MAP_READ, 0, inctx->size_classes, 0, NULL, NULL, &err);
         CHECK_CL(err);
 
         //check_dom(device_dom_mirror, device_classes_mirror);
@@ -631,13 +636,49 @@ int main() {
 
     fprintf(stderr, "Size of a DOM node: %d\n", (int)sizeof(struct dom_node));
 
-    time_t seed = time(NULL);
+    //time_t seed = time(NULL);
+    //srand(seed);
+    srand(42);
 
-    go(platform, seed, CL_DEVICE_TYPE_GPU, MODE_MAPPED);
+    struct input_context inctx = {0};
+
+    inctx.size_dom = sizeof(struct dom_node) * NODE_COUNT;
+    inctx.size_stylesheet = sizeof(struct css_stylesheet) * 1;
+    inctx.size_properties = sizeof(struct css_property) * PROPERTY_COUNT;
+    inctx.size_classes = sizeof(cl_int) * CLASS_COUNT;
+
+    fprintf(stderr, "DOM size: %d\n", inctx.size_dom);
+    fprintf(stderr, "stylesheet size: %d\n", inctx.size_stylesheet);
+    fprintf(stderr, "properties size: %d\n", inctx.size_properties);
+    fprintf(stderr, "classes size: %d\n", inctx.size_classes);
+
+    inctx.dom = (struct dom_node*)malloc(inctx.size_dom);
+    inctx.stylesheet = (struct css_stylesheet*)malloc(inctx.size_stylesheet);
+    inctx.properties = (struct css_property*)malloc(inctx.size_properties);
+    inctx.classes = (cl_int*)malloc(inctx.size_classes);
+
+    memset(inctx.dom, 0, inctx.size_dom);
+    memset(inctx.stylesheet, 0, inctx.size_stylesheet);
+    memset(inctx.properties, 0, inctx.size_properties);
+    memset(inctx.classes, 0, inctx.size_classes);
+
+    // Create the stylesheet and the DOM.
+    uint64_t start = mach_absolute_time();
+    int property_index = 0;
+    create_stylesheet(inctx.stylesheet, inctx.properties, &property_index);
+    int class_count = 0, global_count = 0;
+    create_dom(inctx.dom, inctx.classes, NULL, &class_count, &global_count, 0);
+
+    double elapsed = (double)(mach_absolute_time() - start) / 1000000.0;
+    report_timing("???", "stylesheet/DOM creation", elapsed, false, MODE_MAPPED);
+
+    dump_dom(inctx.dom, inctx.classes, "DOM_in.dat");
+
+    go(platform, CL_DEVICE_TYPE_GPU, MODE_MAPPED, &inctx);
 #ifndef NO_SVM
-    //go(platform, seed, CL_DEVICE_TYPE_GPU, MODE_SVM);
+    //go(platform, CL_DEVICE_TYPE_GPU, MODE_SVM, &inctx);
 #endif
-    //go(platform, seed, CL_DEVICE_TYPE_CPU, MODE_MAPPED);
+    go(platform, CL_DEVICE_TYPE_CPU, MODE_MAPPED, &inctx);
     return 0;
 }
 
