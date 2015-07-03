@@ -7,6 +7,10 @@
 #ifndef SELECTRON_H
 #define SELECTRON_H
 
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
