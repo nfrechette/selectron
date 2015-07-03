@@ -2,3 +2,8 @@
 selectron-cl
 *.dat
 *.swp
+Debug/
+x64/
+Release/
+*.opensdf
+*.sdf
