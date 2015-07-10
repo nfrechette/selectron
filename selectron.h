@@ -59,6 +59,18 @@
 #define LEFT_SEED   12345
 #define RIGHT_SEED  67890
 
+// On Windows 8.1 Pro, my CPU has 32KB of local storage.
+// On OS X, my CPU has 64KB of local storage.
+// On Windows 8.1 Pro, my Intel Iris 5100 has 64KB of local storage.
+// It is not clear why I have so little local storage on Windows with the CPU version
+// since in practice it should be bound by global memory. It is even weirder that the value is smaller than
+// what my GPU offers.
+
+// Group size must be a multiple of 32.
+
+#define MAX_GROUP_SIZE				160		// 30KB of local storage
+//#define MAX_GROUP_SIZE				320		// 60KB of local storage
+
 #define STRUCT_CSS_PROPERTY \
     struct css_property { \
         cl_int name; \
@@ -264,7 +276,7 @@ STRUCT_DOM_NODE;
     do {\
         qualifier struct dom_node *node = &first[index]; \
         int count = 0; \
-        __local struct css_matched_property matched_properties[16 * 320]; \
+        __local struct css_matched_property matched_properties[16 * MAX_GROUP_SIZE]; \
         int offset = 16 * get_local_id(0); \
         int left_id_index = hashfn(node->id, LEFT_SEED) % HASH_SIZE; \
         int right_id_index = hashfn(node->id, RIGHT_SEED) % HASH_SIZE; \

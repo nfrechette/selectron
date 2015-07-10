@@ -529,6 +529,9 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
                                       NULL));
     fprintf(stderr, "kernel local mem size=%d\n", (int)kernel_local_mem_size);
 
+	size_t global_work_size = NODE_COUNT;
+	local_workgroup_size = local_workgroup_size > MAX_GROUP_SIZE ? MAX_GROUP_SIZE : local_workgroup_size;
+
     // Set the arguments to the kernel.
     if (mode != MODE_SVM) {
         CHECK_CL(clSetKernelArg(kernel, 0, sizeof(cl_mem), &ctx.device_dom));
@@ -550,8 +553,7 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
         init_mem(commands, inctx, &ctx, device_name, mode, device_type);
 
         start = mach_absolute_time();
-        size_t global_work_size = NODE_COUNT;
-        local_workgroup_size = local_workgroup_size > 320 ? 320 : local_workgroup_size;
+
         CHECK_CL(clEnqueueNDRangeKernel(commands,
                                         kernel,
                                         1,
