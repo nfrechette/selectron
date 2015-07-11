@@ -219,6 +219,23 @@ STRUCT_CSS_MATCHED_PROPERTY;
 
 STRUCT_DOM_NODE;
 
+#define STRUCT_DOM_NODE_INPUT \
+    struct dom_node_input { \
+        cl_int id; \
+        cl_int tag_name; \
+        cl_int class_count; \
+        cl_int first_class; \
+    }
+
+STRUCT_DOM_NODE_INPUT;
+
+#define STRUCT_DOM_NODE_OUTPUT \
+    struct dom_node_output { \
+        cl_int style[MAX_STYLE_PROPERTIES]; \
+    }
+
+STRUCT_DOM_NODE_OUTPUT;
+
 // Insertion sort.
 #define SORT_SELECTORS(matched_properties, count) \
     do { \
@@ -264,7 +281,8 @@ STRUCT_DOM_NODE;
         } \
     } while(0)
 
-#define MATCH_SELECTORS(first, \
+#define MATCH_SELECTORS(dom_inputs, \
+                        dom_outputs, \
                         stylesheet, \
                         properties, \
                         classes, \
@@ -274,7 +292,7 @@ STRUCT_DOM_NODE;
                         sortfn, \
                         qualifier) \
     do {\
-        qualifier struct dom_node *node = &first[index]; \
+        qualifier struct dom_node_input *node = &dom_inputs[index]; \
         int count = 0; \
         __local struct css_matched_property matched_properties[16 * MAX_GROUP_SIZE]; \
         int offset = 16 * get_local_id(0); \
@@ -343,20 +361,16 @@ STRUCT_DOM_NODE;
                                  matched_properties, \
                                  qualifier); \
         } \
-        if (1) { /*skip*/ \
         sortfn(&matched_properties[offset], count); \
-        }/*skip*/ \
-        if (1) { /*skip*/ \
         for (int i = 0; i < count; i++) { \
             struct css_matched_property matched = matched_properties[offset + i]; \
             int pcount = matched.property_count; \
             for (int j = 0; j < pcount; j++) { \
                 struct css_property property = \
                     properties[matched.property_index + j]; \
-                node->style[property.name] = property.value; \
+                dom_outputs[index].style[property.name] = property.value; \
             } \
         } \
-        }/*skip*/ \
     } while(0)
 
 #if 0
