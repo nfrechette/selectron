@@ -380,7 +380,7 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
     CHECK_CL(err);
     abort_if_null(context, "create context failed");
 
-    cl_command_queue commands = clCreateCommandQueue(context, device_id, 0, &err);
+    cl_command_queue commands = clCreateCommandQueue(context, device_id, CL_QUEUE_PROFILING_ENABLE, &err);
     abort_if_null(commands, "create command queue failed");
 
     cl_program program = clCreateProgramWithSource(context,
@@ -554,6 +554,7 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
 
         start = mach_absolute_time();
 
+        cl_event event;
         CHECK_CL(clEnqueueNDRangeKernel(commands,
                                         kernel,
                                         1,
@@ -562,12 +563,20 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
                                         &local_workgroup_size,
                                         0,
                                         NULL,
-                                        NULL));
+                                        &event));
         clFinish(commands);
+        clWaitForEvents(1, &event);
+
+        cl_ulong start_device = 0;
+        cl_ulong end_device = 0;
+        CHECK_CL(clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_device, NULL));
+        CHECK_CL(clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_device, NULL));
 
         // Report timing.
-        double elapsed = (double)(mach_absolute_time() - start) / 1000000.0;
-        report_timing(device_name, "kernel execution", elapsed, false, mode);
+        double elapsed_main = (double)(mach_absolute_time() - start) / 1000000.0;
+        double elapsed_device = (double)(end_device - start_device) / 1000000.0;
+        report_timing(device_name, "kernel (Main)", elapsed_main, false, mode);
+        report_timing(device_name, "kernel (Device)", elapsed_device, false, mode);
     }
 
     if (mode != MODE_SVM) {
