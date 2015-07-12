@@ -276,8 +276,8 @@ STRUCT_DOM_NODE_OUTPUT;
         } \
         if (rule_offset != ~0) { \
             int index = count_++; \
-            matched_properties_[offset + index].specificity = spec_; \
-            matched_properties_[offset + index].rule_offset = rule_offset; \
+            matched_properties_[index].specificity = spec_; \
+            matched_properties_[index].rule_offset = rule_offset; \
         } \
     } while(0)
 
@@ -294,8 +294,7 @@ STRUCT_DOM_NODE_OUTPUT;
     do {\
         struct dom_node_input node = dom_inputs[index]; \
         int count = 0; \
-        __local struct css_matched_property matched_properties[16 * MAX_GROUP_SIZE]; \
-        int offset = 16 * get_local_id(0); \
+        struct css_matched_property matched_properties[16]; \
         int left_id_index = hashfn(node.id, LEFT_SEED) % HASH_SIZE; \
         int right_id_index = hashfn(node.id, RIGHT_SEED) % HASH_SIZE; \
         int left_tag_name_index = hashfn(node.tag_name, LEFT_SEED) % HASH_SIZE; \
@@ -355,9 +354,9 @@ STRUCT_DOM_NODE_OUTPUT;
                                  matched_properties, \
                                  qualifier); \
         } \
-        sortfn(&matched_properties[offset], count); \
+        sortfn(&matched_properties[0], count); \
         for (int i = 0; i < count; i++) { \
-            struct css_matched_property matched = matched_properties[offset + i]; \
+            struct css_matched_property matched = matched_properties[i]; \
             struct css_rule rule = *(struct css_rule*)((ulong)stylesheet + matched.rule_offset); \
             int pcount = rule.property_count; \
             for (int j = 0; j < pcount; j++) { \
