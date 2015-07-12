@@ -44,6 +44,7 @@ uint64_t mach_absolute_time() {
 
 const char *selector_matching_kernel_source = "\n"
     "#define cl_int int\n"
+    "#define cl_uint uint\n"
     "#define cl_ulong ulong\n"
     XSTRINGIFY(STRUCT_CSS_PROPERTY) ";\n"
     XSTRINGIFY(STRUCT_CSS_RULE) ";\n"

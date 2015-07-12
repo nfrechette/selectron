@@ -59,17 +59,19 @@
 #define LEFT_SEED   12345
 #define RIGHT_SEED  67890
 
-// On Windows 8.1 Pro, my CPU has 32KB of local storage.
-// On OS X, my CPU has 64KB of local storage.
-// On Windows 8.1 Pro, my Intel Iris 5100 has 64KB of local storage.
-// It is not clear why I have so little local storage on Windows with the CPU version
+// On OS X and Windows 8.1 Pro, my CPU has 32KB of local storage.
+// On OS X and Windows 8.1 Pro, my Intel Iris 5100 has 64KB of local storage.
+// It is not clear why I have so little local storage on with the CPU version
 // since in practice it should be bound by global memory. It is even weirder that the value is smaller than
 // what my GPU offers.
+// In practice, it is best to keep the group size as small as possible in memory
+// bound kernels because it allows the GPU scheduler to run multiple groups
+// concurrently on the same compute unit. When one group stalls on memory read/write, it will context switch to another. This is only possible if there is enough local storage and registers to accomodate more than 1 group. As such we must be careful how we use it.
+// Always profile when changing this value!
 
 // Group size must be a multiple of 32.
 
-#define MAX_GROUP_SIZE				160		// 30KB of local storage
-//#define MAX_GROUP_SIZE				320		// 60KB of local storage
+#define MAX_GROUP_SIZE				32		// 4KB of local storage
 
 #define STRUCT_CSS_PROPERTY \
     struct css_property { \
@@ -199,8 +201,7 @@ STRUCT_CSS_STYLESHEET;
 #define STRUCT_CSS_MATCHED_PROPERTY \
     struct css_matched_property { \
         cl_int specificity; \
-        cl_int property_index; \
-        cl_int property_count; \
+        cl_uint rule_offset; \
     }
 
 STRUCT_CSS_MATCHED_PROPERTY;
@@ -256,28 +257,23 @@ STRUCT_DOM_NODE_OUTPUT;
 #define MATCH_SELECTORS_HASH(value_, \
                              hash_, \
                              spec_, \
-                             findfn, \
                              left_index_, \
                              right_index_, \
                              count_, \
                              matched_properties_, \
                              qualifier) \
     do {\
-        qualifier const struct css_rule * rule = 0; \
-        int rule_set = 0; \
-        if ((hash_)->left[left_index_].type != 0 && (hash_)->left[left_index_].value == value_) { \
-            rule = &(hash_)->left[left_index_]; \
-            rule_set = 1; \
+        uint rule_offset = ~0; \
+        if (hash_.left[left_index_].type != 0 && hash_.left[left_index_].value == value_) { \
+            rule_offset = (uint)((ulong)&hash_.left[left_index_] - (ulong)stylesheet); \
         } \
-        if ((hash_)->right[right_index_].type != 0 && (hash_)->right[right_index_].value == value_) { \
-            rule = &(hash_)->right[right_index_]; \
-            rule_set = 1; \
+        if (hash_.right[right_index_].type != 0 && hash_.right[right_index_].value == value_) { \
+            rule_offset = (uint)((ulong)&hash_.right[right_index_] - (ulong)stylesheet); \
         } \
-        if (rule_set != 0) { \
+        if (rule_offset != ~0) { \
             int index = count_++; \
             matched_properties_[offset + index].specificity = spec_; \
-            matched_properties_[offset + index].property_index = rule->property_index; \
-            matched_properties_[offset + index].property_count = rule->property_count; \
+            matched_properties_[offset + index].rule_offset = rule_offset; \
         } \
     } while(0)
 
@@ -292,69 +288,63 @@ STRUCT_DOM_NODE_OUTPUT;
                         sortfn, \
                         qualifier) \
     do {\
-        qualifier struct dom_node_input *node = &dom_inputs[index]; \
+        struct dom_node_input node = dom_inputs[index]; \
         int count = 0; \
         __local struct css_matched_property matched_properties[16 * MAX_GROUP_SIZE]; \
         int offset = 16 * get_local_id(0); \
-        int left_id_index = hashfn(node->id, LEFT_SEED) % HASH_SIZE; \
-        int right_id_index = hashfn(node->id, RIGHT_SEED) % HASH_SIZE; \
-        int left_tag_name_index = hashfn(node->tag_name, LEFT_SEED) % HASH_SIZE; \
-        int right_tag_name_index = hashfn(node->tag_name, RIGHT_SEED) % HASH_SIZE; \
-        MATCH_SELECTORS_HASH(node->id, \
-                             &stylesheet->author.ids, \
+        int left_id_index = hashfn(node.id, LEFT_SEED) % HASH_SIZE; \
+        int right_id_index = hashfn(node.id, RIGHT_SEED) % HASH_SIZE; \
+        int left_tag_name_index = hashfn(node.tag_name, LEFT_SEED) % HASH_SIZE; \
+        int right_tag_name_index = hashfn(node.tag_name, RIGHT_SEED) % HASH_SIZE; \
+        MATCH_SELECTORS_HASH(node.id, \
+                             stylesheet->author.ids, \
                              0, \
-                             findfn, \
                              left_id_index, \
                              right_id_index, \
                              count, \
                              matched_properties, \
                              qualifier); \
-        MATCH_SELECTORS_HASH(node->tag_name, \
-                             &stylesheet->author.tag_names, \
+        MATCH_SELECTORS_HASH(node.tag_name, \
+                             stylesheet->author.tag_names, \
                              0, \
-                             findfn, \
                              left_tag_name_index, \
                              right_tag_name_index, \
                              count, \
                              matched_properties, \
                              qualifier); \
-        MATCH_SELECTORS_HASH(node->id, \
-                             &stylesheet->user_agent.ids, \
+        MATCH_SELECTORS_HASH(node.id, \
+                             stylesheet->user_agent.ids, \
                              1, \
-                             findfn, \
                              left_id_index, \
                              right_id_index, \
                              count, \
                              matched_properties, \
                              qualifier); \
-        MATCH_SELECTORS_HASH(node->tag_name, \
-                             &stylesheet->user_agent.tag_names, \
+        MATCH_SELECTORS_HASH(node.tag_name, \
+                             stylesheet->user_agent.tag_names, \
                              1, \
-                             findfn, \
                              left_tag_name_index, \
                              right_tag_name_index, \
                              count, \
                              matched_properties, \
                              qualifier); \
-        int class_count = node->class_count; \
-        int first_class = node->first_class; \
+        int class_count = node.class_count; \
+        int first_class = node.first_class; \
         for (int i = 0; i < class_count; i++) { \
             int klass = classes[first_class + i]; \
             int left_class_index = hashfn(klass, LEFT_SEED) % HASH_SIZE; \
             int right_class_index = hashfn(klass, RIGHT_SEED) % HASH_SIZE; \
             MATCH_SELECTORS_HASH(klass, \
-                                 &stylesheet->author.classes, \
+                                 stylesheet->author.classes, \
                                  0, \
-                                 findfn, \
                                  left_class_index, \
                                  right_class_index, \
                                  count, \
                                  matched_properties, \
                                  qualifier); \
             MATCH_SELECTORS_HASH(klass, \
-                                 &stylesheet->user_agent.classes, \
+                                 stylesheet->user_agent.classes, \
                                  0, \
-                                 findfn, \
                                  left_class_index, \
                                  right_class_index, \
                                  count, \
@@ -364,10 +354,11 @@ STRUCT_DOM_NODE_OUTPUT;
         sortfn(&matched_properties[offset], count); \
         for (int i = 0; i < count; i++) { \
             struct css_matched_property matched = matched_properties[offset + i]; \
-            int pcount = matched.property_count; \
+            struct css_rule rule = *(struct css_rule*)((ulong)stylesheet + matched.rule_offset); \
+            int pcount = rule.property_count; \
             for (int j = 0; j < pcount; j++) { \
                 struct css_property property = \
-                    properties[matched.property_index + j]; \
+                    properties[rule.property_index + j]; \
                 dom_outputs[index].style[property.name] = property.value; \
             } \
         } \
