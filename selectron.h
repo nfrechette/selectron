@@ -69,9 +69,13 @@
 // concurrently on the same compute unit. When one group stalls on memory read/write, it will context switch to another. This is only possible if there is enough local storage and registers to accomodate more than 1 group. As such we must be careful how we use it.
 // Always profile when changing this value!
 
-// Group size must be a multiple of 32.
+// Group size must be a multiple of 32 on my platform.
 
-#define MAX_GROUP_SIZE				32		// 4KB of local storage
+// 4KB of local storage
+#define MAX_GROUP_SIZE				32
+
+// Disabling auto-vectorizing since it seems to harm performance at the moment
+#define MAX_CPU_GROUP_SIZE                      1
 
 #define STRUCT_CSS_PROPERTY \
     struct css_property { \

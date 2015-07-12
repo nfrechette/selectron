@@ -561,7 +561,12 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
     fprintf(stderr, "kernel local mem size=%d\n", (int)kernel_local_mem_size);
 
 	size_t global_work_size = NODE_COUNT;
-	local_workgroup_size = local_workgroup_size > MAX_GROUP_SIZE ? MAX_GROUP_SIZE : local_workgroup_size;
+
+        // We allow a different group size on the CPU since it is used to
+        // control to auto-vectorizer which doesn't always work well.
+        size_t max_group_size = device_type == CL_DEVICE_TYPE_CPU ? MAX_CPU_GROUP_SIZE : MAX_GROUP_SIZE; 
+
+	local_workgroup_size = local_workgroup_size > max_group_size ? max_group_size : local_workgroup_size;
 
     // Set the arguments to the kernel.
     if (mode != MODE_SVM) {
