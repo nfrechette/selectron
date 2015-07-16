@@ -345,11 +345,11 @@ void print_device_info(cl_device_id device_id)
 
     cl_ulong local_mem_size;
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(cl_ulong), &local_mem_size, NULL));
-    fprintf(stderr, "local mem size: %d\n", (int)local_mem_size);
+    fprintf(stderr, "local mem size: %d KB\n", (int)local_mem_size / 1024);
 
     cl_ulong global_mem_size;
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &global_mem_size, NULL));
-    fprintf(stderr, "global mem size: %d\n", (int)global_mem_size);
+    fprintf(stderr, "global mem size: %d MB\n", (int)(global_mem_size / (1024 * 1024)));
 
     cl_bool is_mem_unified;
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof(cl_bool), &is_mem_unified, NULL));
@@ -357,15 +357,15 @@ void print_device_info(cl_device_id device_id)
 
     cl_uint cache_line_size;
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(cl_uint), &cache_line_size, NULL));
-    fprintf(stderr, "cache line size: %d\n", (int)cache_line_size);
+    fprintf(stderr, "cache line size: %d bytes\n", (int)cache_line_size);
 
     cl_ulong global_cache_size;
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE, sizeof(cl_ulong), &global_cache_size, NULL));
-    fprintf(stderr, "global cache size: %d\n", (int)global_cache_size);
+    fprintf(stderr, "global cache size: %d KB\n", (int)global_cache_size / 1024);
 
     cl_uint address_space_size;
     CHECK_CL(clGetDeviceInfo(device_id, CL_DEVICE_ADDRESS_BITS, sizeof(cl_uint), &address_space_size, NULL));
-    fprintf(stderr, "address space size: %d\n", (int)address_space_size);
+    fprintf(stderr, "address space size: %d bit\n", (int)address_space_size);
 }
 
 void go(cl_platform_id platform, cl_device_type device_type, int mode, const struct input_context* inctx) {
@@ -549,7 +549,7 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
                                       sizeof(local_workgroup_size),
                                       &local_workgroup_size,
                                       NULL));
-    fprintf(stderr, "kernel local workgroup size=%d\n", (int)local_workgroup_size);
+    fprintf(stderr, "kernel local workgroup size: %d\n", (int)local_workgroup_size);
 
     cl_ulong kernel_local_mem_size;
     CHECK_CL(clGetKernelWorkGroupInfo(kernel,
@@ -558,7 +558,7 @@ void go(cl_platform_id platform, cl_device_type device_type, int mode, const str
                                       sizeof(kernel_local_mem_size),
                                       &kernel_local_mem_size,
                                       NULL));
-    fprintf(stderr, "kernel local mem size=%d\n", (int)kernel_local_mem_size);
+    fprintf(stderr, "kernel local mem size: %d KB\n", (int)kernel_local_mem_size / 1024);
 
 	size_t global_work_size = NODE_COUNT;
 
@@ -675,7 +675,7 @@ int main() {
     PRINT_PLATFORM_INFO(platform, VENDOR);
     PRINT_PLATFORM_INFO(platform, EXTENSIONS);
 
-    fprintf(stderr, "Size of a DOM node: %d\n", (int)sizeof(struct dom_node));
+    fprintf(stderr, "Size of a DOM node: %d bytes\n", (int)sizeof(struct dom_node));
 
     //time_t seed = time(NULL);
     //srand(seed);
@@ -690,12 +690,12 @@ int main() {
     inctx.size_properties = sizeof(struct css_property) * PROPERTY_COUNT;
     inctx.size_classes = sizeof(cl_int) * CLASS_COUNT;
 
-    fprintf(stderr, "DOM size: %d\n", inctx.size_dom);
-    fprintf(stderr, "DOM input size: %d\n", inctx.size_dom_input);
-    fprintf(stderr, "DOM output size: %d\n", inctx.size_dom_output);
-    fprintf(stderr, "stylesheet size: %d\n", inctx.size_stylesheet);
-    fprintf(stderr, "properties size: %d\n", inctx.size_properties);
-    fprintf(stderr, "classes size: %d\n", inctx.size_classes);
+    fprintf(stderr, "DOM size: %d bytes\n", inctx.size_dom);
+    fprintf(stderr, "DOM input size: %d bytes\n", inctx.size_dom_input);
+    fprintf(stderr, "DOM output size: %d bytes\n", inctx.size_dom_output);
+    fprintf(stderr, "stylesheet size: %d bytes\n", inctx.size_stylesheet);
+    fprintf(stderr, "properties size: %d bytes\n", inctx.size_properties);
+    fprintf(stderr, "classes size: %d bytes\n", inctx.size_classes);
 
     inctx.dom = (struct dom_node*)malloc(inctx.size_dom);
     inctx.stylesheet = (struct css_stylesheet*)malloc(inctx.size_stylesheet);
