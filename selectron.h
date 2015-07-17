@@ -257,6 +257,35 @@ STRUCT_DOM_NODE_OUTPUT;
             matched_properties[j + 1] = key; \
         } \
     } while(0)
+																														        } \
+															    } while(0)
+
+#define REPLICATE_UINT16(value_) (uint16)(value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_)
+#define REPLICATE_INT16(value_) (int16)(value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_, value_)
+
+#define SORTED_INSERT(sorted_keys_, sorted_values_, key_, value_) \
+	do { \
+		int16 wide_key = REPLICATE_INT16(key_); \
+		uint16 wide_value = REPLICATE_UINT16(value_); \
+		int16 tmp1 = (sorted_keys_ > wide_key); \
+		int16 tmp2 = select(sorted_keys_, wide_key, tmp1); \
+		uint16 tmp7 = select(sorted_values_, wide_value, tmp1); \
+		const uint16 ROTATE_RIGHT = (uint16)(16, 0, 1, 2, 3, 4, 5, 6, 7 ,8 , 9, 10, 11, 12, 13, 14); \
+		tmp1 = shuffle2(tmp1, REPLICATE_INT16(0), ROTATE_RIGHT); \
+		int16 tmp5 = tmp1 ^ REPLICATE_INT16(-1); \
+		const uint16 SORTED_SEL_RHS = (uint16)(16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31); \
+		/* Hack because of compiler crash, see below for faster equivalent. */ \
+		int16 keys1 = shuffle2(sorted_keys_, tmp2, ROTATE_RIGHT); \
+		int16 keys2 = shuffle2(sorted_keys_, tmp2, SORTED_SEL_RHS); \
+		sorted_keys_ = select(keys1, keys2, tmp5); \
+		uint16 values1 = shuffle2(sorted_values_, tmp7, ROTATE_RIGHT); \
+		uint16 values2 = shuffle2(sorted_values_, tmp7, SORTED_SEL_RHS); \
+		sorted_values_ = select(values1, values2, tmp5); \
+		/* The below uses fewer instructions but it crashes the OpenCL compiler. */ \
+		/*uint16 tmp6 = select(SORTED_SEL_LHS, SORTED_SEL_RHS, tmp5);*/ \
+		/*sorted_keys_ = shuffle2(sorted_keys_, tmp2, tmp6);*/ \
+		/*sorted_values_ = shuffle2(sorted_values_, tmp7, tmp6);*/ \
+	} while (0)
 
 #define MATCH_SELECTORS_HASH(value_, \
                              hash_, \
@@ -264,9 +293,9 @@ STRUCT_DOM_NODE_OUTPUT;
                              left_index_, \
                              right_index_, \
                              count_, \
-                             matched_properties_, \
-                             qualifier) \
-    do {\
+                             matched_keys_, \
+							 matched_values_) \
+    do { \
         uint rule_offset = ~0; \
         if (hash_.left[left_index_].type != 0 && hash_.left[left_index_].value == value_) { \
             rule_offset = (uint)((ulong)&hash_.left[left_index_] - (ulong)stylesheet); \
@@ -275,11 +304,10 @@ STRUCT_DOM_NODE_OUTPUT;
             rule_offset = (uint)((ulong)&hash_.right[right_index_] - (ulong)stylesheet); \
         } \
         if (rule_offset != ~0) { \
-            int index = count_++; \
-            matched_properties_[index].specificity = spec_; \
-            matched_properties_[index].rule_offset = rule_offset; \
-        } \
-    } while(0)
+            count_++; \
+			SORTED_INSERT(matched_keys_, matched_values_, spec_, rule_offset); \
+		} \
+	} while(0)
 
 #define MATCH_SELECTORS(dom_inputs, \
                         dom_outputs, \
@@ -294,7 +322,8 @@ STRUCT_DOM_NODE_OUTPUT;
     do {\
         struct dom_node_input node = dom_inputs[index]; \
         int count = 0; \
-        struct css_matched_property matched_properties[16]; \
+		int16 matched_keys = REPLICATE_INT16(1000000); \
+		uint16 matched_values = REPLICATE_UINT16(0); \
         int left_id_index = hashfn(node.id, LEFT_SEED) % HASH_SIZE; \
         int right_id_index = hashfn(node.id, RIGHT_SEED) % HASH_SIZE; \
         int left_tag_name_index = hashfn(node.tag_name, LEFT_SEED) % HASH_SIZE; \
@@ -305,32 +334,32 @@ STRUCT_DOM_NODE_OUTPUT;
                              left_id_index, \
                              right_id_index, \
                              count, \
-                             matched_properties, \
-                             qualifier); \
+                             matched_keys, \
+							 matched_values); \
         MATCH_SELECTORS_HASH(node.tag_name, \
                              stylesheet->author.tag_names, \
                              0, \
                              left_tag_name_index, \
                              right_tag_name_index, \
                              count, \
-                             matched_properties, \
-                             qualifier); \
+                             matched_keys, \
+							 matched_values); \
         MATCH_SELECTORS_HASH(node.id, \
                              stylesheet->user_agent.ids, \
                              1, \
                              left_id_index, \
                              right_id_index, \
                              count, \
-                             matched_properties, \
-                             qualifier); \
+                             matched_keys, \
+							 matched_values); \
         MATCH_SELECTORS_HASH(node.tag_name, \
                              stylesheet->user_agent.tag_names, \
                              1, \
                              left_tag_name_index, \
                              right_tag_name_index, \
                              count, \
-                             matched_properties, \
-                             qualifier); \
+                             matched_keys, \
+							 matched_values); \
         int class_count = node.class_count; \
         int first_class = node.first_class; \
         for (int i = 0; i < class_count; i++) { \
@@ -343,26 +372,26 @@ STRUCT_DOM_NODE_OUTPUT;
                                  left_class_index, \
                                  right_class_index, \
                                  count, \
-                                 matched_properties, \
-                                 qualifier); \
+								 matched_keys, \
+								 matched_values); \
             MATCH_SELECTORS_HASH(klass, \
                                  stylesheet->user_agent.classes, \
                                  0, \
                                  left_class_index, \
                                  right_class_index, \
                                  count, \
-                                 matched_properties, \
-                                 qualifier); \
+								 matched_keys, \
+								 matched_values); \
         } \
-        sortfn(&matched_properties[0], count); \
+		const uint16 ROTATE_LEFT_1 = (uint16)(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0); \
         for (int i = 0; i < count; i++) { \
-            struct css_matched_property matched = matched_properties[i]; \
-            struct css_rule rule = *(struct css_rule*)((ulong)stylesheet + matched.rule_offset); \
+			uint rule_offset = matched_values.s0; \
+			matched_values = shuffle(matched_values, ROTATE_LEFT_1); \
+            struct css_rule rule = *(struct css_rule*)((ulong)stylesheet + rule_offset); \
             int pcount = rule.property_count; \
             for (int j = 0; j < pcount; j++) { \
-                struct css_property property = \
-                    properties[rule.property_index + j]; \
-                dom_outputs[index].style[property.name] = property.value; \
+                struct css_property property = properties[rule.property_index + j]; \
+				dom_outputs[index].style[property.name] = property.value; \
             } \
         } \
     } while(0)
